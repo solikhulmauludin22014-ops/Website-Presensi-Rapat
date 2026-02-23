@@ -1,0 +1,887 @@
+import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from fpdf import FPDF
+from datetime import datetime
+import pandas as pd
+import json
+import qrcode
+from io import BytesIO
+from PIL import Image
+from streamlit_drawable_canvas import st_canvas
+import hashlib
+import base64
+
+# Konfigurasi halaman
+st.set_page_config(
+    page_title="Sistem Absensi & Notulensi Rapat",
+    page_icon="📋",
+    layout="wide"
+)
+
+# Data hardcoded guru/staf (untuk admin)
+DAFTAR_GURU = [
+    {"nama": "Budi Santoso, S.Pd", "nip": "197501011998031001", "jabatan": "Guru Matematika"},
+    {"nama": "Siti Nurhaliza, M.Pd", "nip": "198203052005012003", "jabatan": "Guru Bahasa Indonesia"},
+    {"nama": "Ahmad Fauzi, S.Si", "nip": "198505152009031004", "jabatan": "Guru Biologi"},
+    {"nama": "Dewi Lestari, S.Pd", "nip": "199002102012022001", "jabatan": "Guru Bahasa Inggris"},
+    {"nama": "Eko Prasetyo, S.Kom", "nip": "199207202015031005", "jabatan": "Guru TIK"},
+    {"nama": "Ratna Sari, S.Pd", "nip": "198808152010012008", "jabatan": "Guru PKn"},
+    {"nama": "Muhammad Rizki, S.Pd", "nip": "199305102014031006", "jabatan": "Guru Olahraga"},
+    {"nama": "Linda Wijaya, S.Pd", "nip": "199109252013022002", "jabatan": "Guru Seni Budaya"},
+    {"nama": "Hendra Gunawan, M.Pd", "nip": "197212051997031002", "jabatan": "Wakil Kepala Sekolah"},
+    {"nama": "Sri Mulyani, S.Pd", "nip": "198604182008012010", "jabatan": "Guru BK"}
+]
+
+# Fungsi koneksi Google Sheets
+@st.cache_resource
+def connect_to_gsheet():
+    """Koneksi ke Google Sheets menggunakan credentials dari secrets"""
+    try:
+        credentials_dict = dict(st.secrets["gcp_service_account"])
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            credentials_dict, scope
+        )
+        client = gspread.authorize(credentials)
+        sheet = client.open_by_key(st.secrets["spreadsheet_key"])
+        return sheet
+    except Exception as e:
+        error_msg = str(e)
+        if "PERMISSION_DENIED" in error_msg or "403" in error_msg:
+            st.error("❌ Google Sheets API atau Drive API belum di-enable! Buka Google Cloud Console → APIs & Services → Library → Enable 'Google Sheets API' dan 'Google Drive API'")
+        elif "not found" in error_msg.lower() or "404" in error_msg:
+            st.error("❌ Spreadsheet tidak ditemukan! Pastikan spreadsheet_key di secrets.toml sudah benar dan spreadsheet sudah di-share ke service account.")
+        elif "invalid_grant" in error_msg.lower():
+            st.error("❌ Credentials tidak valid! Pastikan private_key dan client_email sudah benar.")
+        else:
+            st.error(f"❌ Gagal koneksi ke Google Sheets: {error_msg if error_msg else 'Pastikan API sudah enable dan spreadsheet sudah di-share ke service account.'}")
+        return None
+
+def get_or_create_worksheet(sheet, worksheet_name, headers=None):
+    """Ambil atau buat worksheet baru, otomatis tulis header jika belum ada"""
+    created_new = False
+    try:
+        worksheet = sheet.worksheet(worksheet_name)
+    except:
+        worksheet = sheet.add_worksheet(title=worksheet_name, rows="1000", cols="20")
+        created_new = True
+    
+    # Pastikan header ada di baris pertama
+    if headers:
+        try:
+            first_row = worksheet.row_values(1)
+            if not first_row or first_row[0] == '':
+                worksheet.update('A1', [headers])
+        except:
+            worksheet.update('A1', [headers])
+    
+    return worksheet
+
+def save_to_gsheet(worksheet, data):
+    """Simpan data ke Google Sheets"""
+    try:
+        worksheet.append_row(data)
+        return True
+    except Exception as e:
+        st.error(f"Gagal menyimpan data: {str(e)}")
+        return False
+
+def update_row_in_gsheet(worksheet, row_index, data):
+    """Update baris tertentu di Google Sheets (row_index 1-based, termasuk header)"""
+    try:
+        for col_idx, value in enumerate(data, start=1):
+            worksheet.update_cell(row_index, col_idx, value)
+        return True
+    except Exception as e:
+        st.error(f"Gagal mengupdate data: {str(e)}")
+        return False
+
+def delete_row_in_gsheet(worksheet, row_index):
+    """Hapus baris tertentu di Google Sheets (row_index 1-based, termasuk header)"""
+    try:
+        worksheet.delete_rows(row_index)
+        return True
+    except Exception as e:
+        st.error(f"Gagal menghapus data: {str(e)}")
+        return False
+
+def delete_rows_by_meeting_id(worksheet, meeting_id):
+    """Hapus semua baris dengan meeting_id tertentu dari worksheet"""
+    try:
+        all_values = worksheet.get_all_values()
+        if len(all_values) <= 1:
+            return True
+        # Cari dari bawah ke atas agar index tidak bergeser
+        rows_to_delete = []
+        for i in range(len(all_values) - 1, 0, -1):  # skip header (index 0)
+            if str(all_values[i][0]).strip() == str(meeting_id).strip():
+                rows_to_delete.append(i + 1)  # +1 karena gspread 1-based
+        for row_idx in rows_to_delete:
+            worksheet.delete_rows(row_idx)
+        return True
+    except Exception as e:
+        st.error(f"Gagal menghapus data absensi: {str(e)}")
+        return False
+
+def generate_meeting_id():
+    """Generate unique meeting ID"""
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    return f"MTG{timestamp}"
+
+def generate_qr_code(meeting_id):
+    """Generate QR Code untuk link absensi"""
+    # URL form absensi (disesuaikan dengan deployment Anda)
+    url = f"{st.secrets.get('app_url', 'http://localhost:8501')}?page=absensi&meeting_id={meeting_id}"
+    
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(url)
+    qr.make(fit=True)
+    
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Convert to bytes
+    buf = BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    
+    return buf, url
+
+class PDFNotulensi(FPDF):
+    """Class untuk generate PDF Notulensi Rapat"""
+    
+    def header(self):
+        self.set_font('Arial', '', 12)
+        self.cell(0, 6, 'PEMERINTAH KABUPATEN SIDOARJO', 0, 1, 'C')
+        self.set_font('Arial', '', 12)
+        self.cell(0, 6, 'DINAS PENDIDIKAN DAN KEBUDAYAAN', 0, 1, 'C')
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 8, 'SD NEGERI SIMOANGIN-ANGIN', 0, 1, 'C')
+        self.set_font('Arial', '', 10)
+        self.cell(0, 5, 'Jalan Simoangin-angin, Wonoayu, Sidoarjo, Jawa Timur 61261', 0, 1, 'C')
+        self.cell(0, 5, 'Pos-el: sdnsimoangin@gmail.com', 0, 1, 'C')
+        self.ln(2)
+        self.set_line_width(0.8)
+        self.line(10, self.get_y(), 200, self.get_y())
+        self.set_line_width(0.3)
+        self.line(10, self.get_y() + 1.5, 200, self.get_y() + 1.5)
+        self.ln(6)
+    
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Halaman {self.page_no()}', 0, 0, 'C')
+
+def generate_pdf(data_rapat, peserta_list, notulensi):
+    """Generate PDF Notulensi Rapat dengan daftar hadir lengkap"""
+    
+    pdf = PDFNotulensi()
+    pdf.add_page()
+    
+    # Judul Dokumen
+    pdf.set_font('Arial', 'B', 14)
+    pdf.cell(0, 10, 'NOTULENSI RAPAT', 0, 1, 'C')
+    pdf.ln(5)
+    
+    # Detail Rapat
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(40, 7, 'DETAIL RAPAT', 0, 1)
+    pdf.set_font('Arial', '', 10)
+    
+    details = [
+        ('Meeting ID', data_rapat['meeting_id']),
+        ('Judul Rapat', data_rapat['judul']),
+        ('Tanggal', data_rapat['tanggal']),
+        ('Waktu', data_rapat['waktu']),
+        ('Lokasi', data_rapat['lokasi']),
+        ('Pimpinan Rapat', data_rapat['pimpinan'])
+    ]
+    
+    for label, value in details:
+        pdf.cell(50, 6, f'{label}:', 0, 0)
+        pdf.cell(0, 6, value, 0, 1)
+    
+    pdf.ln(5)
+    
+    # Daftar Hadir
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 7, f'DAFTAR HADIR ({len(peserta_list)} Peserta)', 0, 1)
+    
+    # Tabel daftar hadir
+    pdf.set_font('Arial', 'B', 9)
+    pdf.set_fill_color(200, 220, 255)
+    pdf.cell(10, 7, 'No', 1, 0, 'C', True)
+    pdf.cell(60, 7, 'Nama', 1, 0, 'C', True)
+    pdf.cell(40, 7, 'NIP', 1, 0, 'C', True)
+    pdf.cell(50, 7, 'Waktu Absen', 1, 0, 'C', True)
+    pdf.cell(30, 7, 'Status', 1, 1, 'C', True)
+    
+    pdf.set_font('Arial', '', 8)
+    
+    for idx, peserta in enumerate(peserta_list, 1):
+        pdf.cell(10, 6, str(idx), 1, 0, 'C')
+        pdf.cell(60, 6, peserta.get('Nama', ''), 1, 0)
+        pdf.cell(40, 6, peserta.get('NIP', ''), 1, 0)
+        pdf.cell(50, 6, peserta.get('Timestamp', ''), 1, 0)
+        pdf.cell(30, 6, 'Hadir', 1, 1, 'C')
+    
+    pdf.ln(5)
+    
+    # Isi Notulensi
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(0, 7, 'ISI NOTULENSI', 0, 1)
+    pdf.set_font('Arial', '', 10)
+    pdf.multi_cell(0, 6, notulensi)
+    
+    pdf.ln(10)
+    
+    # Tanda tangan
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(95, 6, f'Sidoarjo, {data_rapat["tanggal"]}', 0, 1)
+    pdf.cell(95, 6, 'Notulis,', 0, 0)
+    pdf.cell(95, 6, 'Mengetahui,', 0, 1)
+    pdf.ln(15)
+    
+    pdf.set_font('Arial', 'U', 10)
+    pdf.cell(95, 6, '(____________________)', 0, 0, 'C')
+    pdf.cell(95, 6, data_rapat['pimpinan'], 0, 1, 'C')
+    
+    pdf.set_font('Arial', '', 9)
+    pdf.cell(95, 5, '', 0, 0)
+    pdf.cell(95, 5, 'Kepala Sekolah', 0, 1, 'C')
+    
+    # Output PDF
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"Notulensi_Rapat_{timestamp}.pdf"
+    pdf.output(filename)
+    
+    return filename
+
+# ============= HALAMAN ADMIN =============
+def admin_page():
+    """Halaman Admin untuk membuat rapat dan generate link"""
+    
+    st.title("👨‍💼 Admin - Buat Rapat & Generate Link Absensi")
+    st.markdown("---")
+    
+    # Sidebar info
+    with st.sidebar:
+        st.markdown("### SD NEGERI SIMOANGIN-ANGIN")
+        st.markdown("Kab. Sidoarjo, Jawa Timur")
+        st.info("**Mode: Admin**\nBuat rapat dan bagikan link absensi ke peserta.")
+        
+        st.markdown("---")
+        st.markdown("**Status Koneksi:**")
+        sheet = connect_to_gsheet()
+        if sheet:
+            st.success("✅ Terhubung ke Google Sheets")
+        else:
+            st.error("❌ Gagal terhubung")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 Buat Rapat Baru", "📊 Lihat Daftar Hadir", "📄 Generate Notulensi", "✏️ Edit/Hapus Rapat"])
+    
+    # TAB 1: Buat Rapat
+    with tab1:
+        st.header("1️⃣ Data Rapat")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            judul_rapat = st.text_input(
+                "Judul Rapat *",
+                placeholder="Contoh: Rapat Koordinasi Semester Genap"
+            )
+            
+            tanggal_rapat = st.date_input(
+                "Tanggal Rapat *",
+                value=datetime.now()
+            )
+            
+            lokasi_rapat = st.text_input(
+                "Lokasi Rapat *",
+                placeholder="Contoh: Ruang Guru"
+            )
+        
+        with col2:
+            waktu_rapat = st.time_input(
+                "Waktu Rapat *",
+                value=datetime.now().time()
+            )
+            
+            pimpinan_rapat = st.text_input(
+                "Pimpinan Rapat *",
+                placeholder="Contoh: Drs. Bambang Sutopo, M.Pd"
+            )
+        
+        st.markdown("---")
+        
+        if st.button("🚀 Buat Rapat & Generate Link", type="primary", use_container_width=True):
+            if not all([judul_rapat, lokasi_rapat, pimpinan_rapat]):
+                st.error("❌ Semua field bertanda * wajib diisi!")
+            else:
+                with st.spinner("🔄 Sedang membuat rapat..."):
+                    meeting_id = generate_meeting_id()
+                    
+                    # Simpan data rapat
+                    if sheet:
+                        rapat_headers = [
+                            "Meeting ID", "Judul", "Tanggal", "Waktu", "Lokasi", 
+                            "Pimpinan", "Timestamp Dibuat", "Status"
+                        ]
+                        worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
+                        
+                        row_data = [
+                            meeting_id,
+                            judul_rapat,
+                            tanggal_rapat.strftime("%d-%m-%Y"),
+                            waktu_rapat.strftime("%H:%M"),
+                            lokasi_rapat,
+                            pimpinan_rapat,
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Aktif"
+                        ]
+                        
+                        if save_to_gsheet(worksheet_rapat, row_data):
+                            st.success(f"✅ Rapat berhasil dibuat dengan ID: **{meeting_id}**")
+                            
+                            # Generate QR Code
+                            qr_img, url = generate_qr_code(meeting_id)
+                            
+                            st.markdown("---")
+                            st.success("### 🎉 Link Absensi Berhasil Dibuat!")
+                            
+                            col1, col2 = st.columns([1, 1])
+                            
+                            with col1:
+                                st.markdown("#### 📱 QR Code")
+                                st.image(qr_img, width=300)
+                            
+                            with col2:
+                                st.markdown("#### 🔗 Link Absensi")
+                                st.code(url, language="text")
+                                st.info("**Cara penggunaan:**\n1. Bagikan link atau QR code ke peserta\n2. Peserta scan QR atau buka link\n3. Peserta isi nama, NIP, dan tanda tangan\n4. Data otomatis tersimpan ke Google Sheets")
+                            
+                            st.balloons()
+    
+    # TAB 2: Lihat Daftar Hadir
+    with tab2:
+        st.header("📊 Lihat Daftar Hadir Rapat")
+        
+        if sheet:
+            try:
+                absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
+                worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
+                data = worksheet_absensi.get_all_records()
+                
+                if data:
+                    df = pd.DataFrame(data)
+                    df['Meeting ID'] = df['Meeting ID'].astype(str)
+                    
+                    # Filter berdasarkan Meeting ID
+                    meeting_ids = df['Meeting ID'].unique()
+                    selected_meeting = st.selectbox("Pilih Rapat:", meeting_ids)
+                    
+                    if selected_meeting:
+                        df_filtered = df[df['Meeting ID'] == selected_meeting]
+                        
+                        st.metric("Total Peserta Hadir", len(df_filtered))
+                        
+                        st.dataframe(
+                            df_filtered[['Nama', 'NIP', 'Timestamp']],
+                            use_container_width=True
+                        )
+                        
+                        # Download CSV
+                        csv = df_filtered.to_csv(index=False)
+                        st.download_button(
+                            "📥 Download Daftar Hadir (CSV)",
+                            csv,
+                            f"daftar_hadir_{selected_meeting}.csv",
+                            "text/csv"
+                        )
+                else:
+                    st.info("Belum ada data absensi.")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+    
+    # TAB 3: Generate Notulensi
+    with tab3:
+        st.header("📄 Generate Notulensi PDF")
+        
+        if sheet:
+            try:
+                rapat_headers = [
+                    "Meeting ID", "Judul", "Tanggal", "Waktu", "Lokasi", 
+                    "Pimpinan", "Timestamp Dibuat", "Status"
+                ]
+                worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
+                data_rapat = worksheet_rapat.get_all_records()
+                
+                if data_rapat:
+                    df_rapat = pd.DataFrame(data_rapat)
+                    df_rapat['Meeting ID'] = df_rapat['Meeting ID'].astype(str)
+                    meeting_ids = df_rapat['Meeting ID'].tolist()
+                    
+                    selected_meeting = st.selectbox("Pilih Rapat untuk Notulensi:", meeting_ids, key="notulensi")
+                    
+                    if selected_meeting:
+                        rapat_data = df_rapat[df_rapat['Meeting ID'] == selected_meeting].iloc[0]
+                        
+                        st.info(f"**Judul:** {rapat_data['Judul']}\n\n**Tanggal:** {rapat_data['Tanggal']}\n\n**Pimpinan:** {rapat_data['Pimpinan']}")
+                        
+                        notulensi_text = st.text_area(
+                            "Tulis Isi Notulensi *",
+                            height=300,
+                            placeholder="Tulis hasil pembahasan rapat..."
+                        )
+                        
+                        if st.button("💾 Generate PDF Notulensi", type="primary"):
+                            if notulensi_text:
+                                # Ambil daftar hadir
+                                absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
+                                worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
+                                absensi_data = worksheet_absensi.get_all_records()
+                                df_absensi = pd.DataFrame(absensi_data)
+                                if not df_absensi.empty:
+                                    df_absensi['Meeting ID'] = df_absensi['Meeting ID'].astype(str)
+                                peserta_list = df_absensi[df_absensi['Meeting ID'] == str(selected_meeting)].to_dict('records') if not df_absensi.empty else []
+                                
+                                data_rapat_dict = {
+                                    'meeting_id': rapat_data['Meeting ID'],
+                                    'judul': rapat_data['Judul'],
+                                    'tanggal': rapat_data['Tanggal'],
+                                    'waktu': rapat_data['Waktu'],
+                                    'lokasi': rapat_data['Lokasi'],
+                                    'pimpinan': rapat_data['Pimpinan']
+                                }
+                                
+                                pdf_filename = generate_pdf(data_rapat_dict, peserta_list, notulensi_text)
+                                
+                                with open(pdf_filename, "rb") as pdf_file:
+                                    st.download_button(
+                                        "📥 Download PDF Notulensi",
+                                        pdf_file.read(),
+                                        pdf_filename,
+                                        "application/pdf"
+                                    )
+                                
+                                st.success("✅ PDF berhasil dibuat!")
+                            else:
+                                st.error("Notulensi harus diisi!")
+                else:
+                    st.info("Belum ada rapat yang dibuat.")
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+
+    # TAB 4: Edit/Hapus Rapat
+    with tab4:
+        st.header("✏️ Kelola Rapat")
+        
+        if sheet:
+            try:
+                rapat_headers = [
+                    "Meeting ID", "Judul", "Tanggal", "Waktu", "Lokasi",
+                    "Pimpinan", "Timestamp Dibuat", "Status"
+                ]
+                worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
+                data_rapat_edit = worksheet_rapat.get_all_records()
+                
+                if not data_rapat_edit:
+                    st.info("Belum ada rapat yang dibuat.")
+                else:
+                    df_rapat_edit = pd.DataFrame(data_rapat_edit)
+                    df_rapat_edit['Meeting ID'] = df_rapat_edit['Meeting ID'].astype(str)
+                    
+                    # Tampilkan daftar rapat
+                    st.subheader("📋 Daftar Rapat")
+                    
+                    display_cols = [c for c in ['Meeting ID', 'Judul', 'Tanggal', 'Waktu', 'Lokasi', 'Pimpinan', 'Status'] if c in df_rapat_edit.columns]
+                    st.dataframe(df_rapat_edit[display_cols], use_container_width=True)
+                    
+                    st.markdown("---")
+                    
+                    meeting_ids_edit = df_rapat_edit['Meeting ID'].tolist()
+                    
+                    # Buat label yang informatif untuk selectbox
+                    meeting_labels = []
+                    for _, row in df_rapat_edit.iterrows():
+                        mid = str(row.get('Meeting ID', ''))
+                        judul = str(row.get('Judul', ''))
+                        tgl = str(row.get('Tanggal', ''))
+                        label = f"{mid} - {judul} ({tgl})"
+                        meeting_labels.append(label)
+                    
+                    selected_label = st.selectbox(
+                        "Pilih Rapat untuk Edit/Hapus:",
+                        meeting_labels,
+                        key="edit_rapat_select"
+                    )
+                    
+                    # Ambil meeting ID dari label
+                    selected_idx = meeting_labels.index(selected_label)
+                    selected_mid = meeting_ids_edit[selected_idx]
+                    
+                    # Cari data rapat yang dipilih
+                    rapat_row = df_rapat_edit[df_rapat_edit['Meeting ID'] == selected_mid].iloc[0]
+                    # Cari row index di Google Sheets (1-based + header row)
+                    rapat_row_idx = df_rapat_edit[df_rapat_edit['Meeting ID'] == selected_mid].index[0] + 2
+                    
+                    # ---- SECTION EDIT ----
+                    st.subheader("✏️ Edit Data Rapat")
+                    
+                    col_e1, col_e2 = st.columns(2)
+                    
+                    with col_e1:
+                        edit_judul = st.text_input(
+                            "Judul Rapat",
+                            value=str(rapat_row.get('Judul', '')),
+                            key="edit_judul"
+                        )
+                        try:
+                            tgl_val = datetime.strptime(str(rapat_row.get('Tanggal', '')), '%d-%m-%Y')
+                        except:
+                            tgl_val = datetime.now()
+                        edit_tanggal = st.date_input(
+                            "Tanggal Rapat",
+                            value=tgl_val,
+                            key="edit_tanggal"
+                        )
+                        edit_lokasi = st.text_input(
+                            "Lokasi Rapat",
+                            value=str(rapat_row.get('Lokasi', '')),
+                            key="edit_lokasi"
+                        )
+                    
+                    with col_e2:
+                        waktu_str = str(rapat_row.get('Waktu', '00:00'))
+                        try:
+                            waktu_val = datetime.strptime(waktu_str, '%H:%M').time()
+                        except:
+                            waktu_val = datetime.now().time()
+                        edit_waktu = st.time_input(
+                            "Waktu Rapat",
+                            value=waktu_val,
+                            key="edit_waktu"
+                        )
+                        edit_pimpinan = st.text_input(
+                            "Pimpinan Rapat",
+                            value=str(rapat_row.get('Pimpinan', '')),
+                            key="edit_pimpinan"
+                        )
+                        status_options = ["Aktif", "Selesai", "Dibatalkan"]
+                        current_status = str(rapat_row.get('Status', 'Aktif'))
+                        status_idx = status_options.index(current_status) if current_status in status_options else 0
+                        edit_status = st.selectbox(
+                            "Status Rapat",
+                            status_options,
+                            index=status_idx,
+                            key="edit_status"
+                        )
+                    
+                    if st.button("💾 Simpan Perubahan", type="primary", key="btn_save_edit"):
+                        if not all([edit_judul, edit_lokasi, edit_pimpinan]):
+                            st.error("❌ Judul, Lokasi, dan Pimpinan wajib diisi!")
+                        else:
+                            with st.spinner("🔄 Menyimpan perubahan..."):
+                                updated_row = [
+                                    selected_mid,
+                                    edit_judul,
+                                    edit_tanggal.strftime("%d-%m-%Y"),
+                                    edit_waktu.strftime("%H:%M"),
+                                    edit_lokasi,
+                                    edit_pimpinan,
+                                    str(rapat_row.get('Timestamp Dibuat', '')),
+                                    edit_status
+                                ]
+                                if update_row_in_gsheet(worksheet_rapat, rapat_row_idx, updated_row):
+                                    st.success(f"✅ Rapat **{selected_mid}** berhasil diupdate!")
+                                    st.rerun()
+                    
+                    st.markdown("---")
+                    
+                    # ---- SECTION HAPUS ----
+                    st.subheader("🗑️ Hapus Rapat")
+                    st.warning(f"⚠️ Menghapus rapat **{selected_mid}** akan menghapus data rapat beserta seluruh data absensi peserta. Tindakan ini tidak dapat dibatalkan!")
+                    
+                    konfirmasi_hapus = st.text_input(
+                        f"Ketik **{selected_mid}** untuk konfirmasi penghapusan:",
+                        key="konfirmasi_hapus",
+                        placeholder=f"Ketik {selected_mid} di sini"
+                    )
+                    
+                    if st.button("🗑️ Hapus Rapat Permanen", type="primary", key="btn_hapus_rapat"):
+                        if konfirmasi_hapus.strip() != selected_mid.strip():
+                            st.error("❌ Konfirmasi tidak cocok! Ketik Meeting ID dengan benar.")
+                        else:
+                            with st.spinner("🔄 Menghapus rapat dan data absensi..."):
+                                # Hapus data absensi terkait
+                                absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
+                                worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
+                                delete_rows_by_meeting_id(worksheet_absensi, selected_mid)
+                                
+                                # Hapus data rapat
+                                if delete_row_in_gsheet(worksheet_rapat, rapat_row_idx):
+                                    st.success(f"✅ Rapat **{selected_mid}** dan seluruh data absensinya berhasil dihapus!")
+                                    st.rerun()
+            except Exception as e:
+                st.error(f"Error: {str(e)}")
+        else:
+            st.error("❌ Tidak dapat terhubung ke Google Sheets.")
+
+# ============= HELPER UNTUK BACA SHEET ROBUST =============
+def read_sheet_as_dataframe(worksheet, expected_headers=None):
+    """Baca worksheet sebagai DataFrame dengan robust header handling.
+    Menggunakan get_all_values() untuk menghindari masalah get_all_records().
+    """
+    all_values = worksheet.get_all_values()
+    
+    if not all_values or len(all_values) < 1:
+        return pd.DataFrame()
+    
+    # Baris pertama = header
+    headers = [str(h).strip() for h in all_values[0]]
+    
+    # Jika tidak ada data (hanya header)
+    if len(all_values) < 2:
+        return pd.DataFrame(columns=headers)
+    
+    data_rows = all_values[1:]
+    
+    # Pastikan semua row punya jumlah kolom yang sama dengan header
+    cleaned_rows = []
+    for row in data_rows:
+        # Skip baris yang sepenuhnya kosong
+        if all(cell.strip() == '' for cell in row):
+            continue
+        # Pad atau trim row agar sesuai jumlah header
+        if len(row) < len(headers):
+            row = row + [''] * (len(headers) - len(row))
+        elif len(row) > len(headers):
+            row = row[:len(headers)]
+        cleaned_rows.append(row)
+    
+    if not cleaned_rows:
+        return pd.DataFrame(columns=headers)
+    
+    return pd.DataFrame(cleaned_rows, columns=headers)
+
+def find_column(df, target_name):
+    """Cari kolom di DataFrame secara case-insensitive dan strip whitespace."""
+    target_lower = target_name.strip().lower()
+    for col in df.columns:
+        if col.strip().lower() == target_lower:
+            return col
+    # Fallback: cari partial match
+    for col in df.columns:
+        if target_lower.replace(' ', '') in col.strip().lower().replace(' ', ''):
+            return col
+    return None
+
+# ============= HALAMAN FORM ABSENSI =============
+def absensi_page():
+    """Halaman Form Absensi untuk Peserta"""
+    
+    # Ambil meeting_id dari URL parameter
+    query_params = st.query_params
+    
+    # Coba berbagai cara mendapatkan meeting_id
+    meeting_id = None
+    try:
+        meeting_id = query_params.get("meeting_id", None)
+    except Exception:
+        pass
+    
+    if not meeting_id:
+        try:
+            params_dict = dict(query_params)
+            meeting_id = params_dict.get("meeting_id", None)
+            # Handle jika value berupa list (Streamlit versi lama)
+            if isinstance(meeting_id, list) and len(meeting_id) > 0:
+                meeting_id = meeting_id[0]
+        except Exception:
+            pass
+    
+    st.title("📝 Form Absensi Rapat")
+    st.markdown("---")
+    
+    if not meeting_id:
+        st.error("❌ Link tidak valid! Meeting ID tidak ditemukan.")
+        st.info("Silakan gunakan link yang dibagikan oleh admin.")
+        return
+    
+    # Pastikan meeting_id string bersih
+    meeting_id = str(meeting_id).strip()
+    
+    # Ambil data rapat
+    sheet = connect_to_gsheet()
+    if not sheet:
+        st.error("❌ Tidak dapat terhubung ke database.")
+        return
+    
+    try:
+        rapat_headers = [
+            "Meeting ID", "Judul", "Tanggal", "Waktu", "Lokasi", 
+            "Pimpinan", "Timestamp Dibuat", "Status"
+        ]
+        worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
+        
+        # Gunakan read_sheet_as_dataframe untuk robust reading
+        df_rapat = read_sheet_as_dataframe(worksheet_rapat, expected_headers=rapat_headers)
+        
+        if df_rapat.empty:
+            st.error("❌ Belum ada data rapat. Minta admin untuk membuat rapat terlebih dahulu.")
+            return
+        
+        # Cari kolom Meeting ID secara flexible
+        meeting_col = find_column(df_rapat, "Meeting ID")
+        if meeting_col is None:
+            # Fallback: gunakan kolom pertama
+            meeting_col = df_rapat.columns[0]
+        
+        # Pastikan tipe data meeting_id cocok (string, stripped)
+        df_rapat[meeting_col] = df_rapat[meeting_col].astype(str).str.strip()
+        rapat = df_rapat[df_rapat[meeting_col] == meeting_id]
+        
+        if rapat.empty:
+            st.error(f"❌ Rapat dengan ID **{meeting_id}** tidak ditemukan!")
+            return
+        
+        rapat_info = rapat.iloc[0]
+        
+        # Helper untuk akses kolom aman
+        def safe_get(col_name, default=""):
+            col = find_column(df_rapat, col_name)
+            if col is not None and col in rapat_info.index:
+                val = rapat_info[col]
+                return str(val) if val else default
+            return default
+        
+        # Tampilkan info rapat
+        judul = safe_get("Judul", "Rapat")
+        tanggal = safe_get("Tanggal", "-")
+        waktu = safe_get("Waktu", "-")
+        lokasi = safe_get("Lokasi", "-")
+        
+        st.success(f"### 📋 {judul}")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.info(f"**📅 Tanggal:** {tanggal}")
+        with col2:
+            st.info(f"**⏰ Waktu:** {waktu}")
+        with col3:
+            st.info(f"**📍 Lokasi:** {lokasi}")
+        
+        st.markdown("---")
+        
+        # Form Absensi
+        st.header("✍️ Isi Data Absensi")
+        
+        nama = st.text_input(
+            "Nama Lengkap *",
+            placeholder="Contoh: Budi Santoso, S.Pd"
+        )
+        
+        nip = st.text_input(
+            "NIP *",
+            placeholder="Contoh: 197501011998031001"
+        )
+        
+        st.markdown("### ✍️ Tanda Tangan Digital")
+        st.info("Silakan tanda tangan di kotak di bawah ini menggunakan mouse/touchscreen")
+        
+        # Canvas untuk tanda tangan
+        canvas_result = st_canvas(
+            stroke_width=3,
+            stroke_color="#000000",
+            background_color="#FFFFFF",
+            height=200,
+            width=600,
+            drawing_mode="freedraw",
+            key="signature_canvas",
+        )
+        
+        col1, col2 = st.columns([1, 3])
+        
+        with col1:
+            if st.button("🔄 Hapus Tanda Tangan"):
+                st.rerun()
+        
+        st.markdown("---")
+        
+        if st.button("✅ Submit Absensi", type="primary", use_container_width=True):
+            if not nama or not nip:
+                st.error("❌ Nama dan NIP wajib diisi!")
+            elif canvas_result.image_data is None or canvas_result.image_data.sum() == 0:
+                st.error("❌ Tanda tangan belum dibuat!")
+            else:
+                # Cek duplikasi menggunakan read robust
+                absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
+                worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
+                df_absensi = read_sheet_as_dataframe(worksheet_absensi, expected_headers=absensi_headers)
+                
+                if not df_absensi.empty:
+                    abs_meeting_col = find_column(df_absensi, "Meeting ID")
+                    abs_nip_col = find_column(df_absensi, "NIP")
+                    
+                    if abs_meeting_col and abs_nip_col:
+                        df_absensi[abs_meeting_col] = df_absensi[abs_meeting_col].astype(str).str.strip()
+                        df_absensi[abs_nip_col] = df_absensi[abs_nip_col].astype(str).str.strip()
+                        sudah_absen = df_absensi[
+                            (df_absensi[abs_meeting_col] == meeting_id) & 
+                            (df_absensi[abs_nip_col] == str(nip).strip())
+                        ]
+                        
+                        if not sudah_absen.empty:
+                            st.warning("⚠️ Anda sudah melakukan absensi untuk rapat ini!")
+                            return
+                
+                # Simpan tanda tangan sebagai base64
+                img = Image.fromarray(canvas_result.image_data.astype('uint8'))
+                buffered = BytesIO()
+                img.save(buffered, format="PNG")
+                signature_base64 = base64.b64encode(buffered.getvalue()).decode()
+                
+                row_data = [
+                    meeting_id,
+                    nama,
+                    nip,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    signature_base64[:100]  # Simpan sebagian untuk verifikasi
+                ]
+                
+                if save_to_gsheet(worksheet_absensi, row_data):
+                    st.success("✅ Absensi berhasil disimpan!")
+                    st.balloons()
+                    st.info("Terima kasih atas kehadiran Anda. Silakan tutup halaman ini.")
+                else:
+                    st.error("❌ Gagal menyimpan absensi. Silakan coba lagi.")
+    
+    except Exception as e:
+        st.error(f"❌ Terjadi kesalahan: {str(e)}")
+        st.info("💡 Pastikan admin sudah membuat rapat dan Google Sheets terhubung dengan benar.")
+
+# ============= MAIN APP =============
+def main():
+    """Routing halaman"""
+    
+    query_params = st.query_params
+    page = query_params.get("page", "admin")
+    
+    if page == "absensi":
+        absensi_page()
+    else:
+        admin_page()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: gray; font-size: 12px;'>"
+        "© 2026 SD Negeri Simoangin-Angin | Sistem Absensi & Notulensi Rapat v2.0"
+        "</div>",
+        unsafe_allow_html=True
+    )
+
+if __name__ == "__main__":
+    main()
