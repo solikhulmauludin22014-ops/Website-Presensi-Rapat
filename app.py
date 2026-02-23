@@ -78,8 +78,16 @@ def get_or_create_worksheet(sheet, worksheet_name, headers=None):
     if headers:
         try:
             first_row = worksheet.row_values(1)
-            if not first_row or first_row[0] == '':
+            # Tulis header jika baris pertama kosong atau tidak cocok
+            if not first_row or all(str(h).strip() == '' for h in first_row):
                 worksheet.update('A1', [headers])
+            else:
+                # Cek apakah header yang ada cocok
+                first_clean = [str(h).strip().lower() for h in first_row if str(h).strip()]
+                expected_clean = [str(h).strip().lower() for h in headers]
+                match = sum(1 for e in expected_clean if e in first_clean)
+                if match == 0 and created_new:
+                    worksheet.update('A1', [headers])
         except:
             worksheet.update('A1', [headers])
     
@@ -688,6 +696,21 @@ def admin_page():
                 worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
                 df_rapat_edit = read_sheet_as_dataframe(worksheet_rapat, expected_headers=rapat_headers)
                 
+                # Debug: tampilkan data mentah untuk diagnosis
+                with st.expander("🔍 Debug: Data Mentah (klik untuk lihat)"):
+                    raw_data = worksheet_rapat.get_all_values()
+                    st.write(f"Total baris di sheet: {len(raw_data)}")
+                    if raw_data:
+                        st.write(f"Header di sheet: {raw_data[0]}")
+                        st.write(f"Jumlah kolom header: {len(raw_data[0])}")
+                        if len(raw_data) > 1:
+                            st.write(f"Baris data pertama: {raw_data[1]}")
+                            st.write(f"Jumlah kolom data: {len(raw_data[1])}")
+                    st.write(f"DataFrame columns: {list(df_rapat_edit.columns)}")
+                    st.write(f"DataFrame shape: {df_rapat_edit.shape}")
+                    if not df_rapat_edit.empty:
+                        st.dataframe(df_rapat_edit)
+                
                 if df_rapat_edit.empty:
                     st.info("Belum ada rapat yang dibuat.")
                 else:
@@ -852,6 +875,7 @@ def admin_page():
 def read_sheet_as_dataframe(worksheet, expected_headers=None):
     """Baca worksheet sebagai DataFrame dengan robust header handling.
     Menggunakan get_all_values() untuk menghindari masalah get_all_records().
+    Jika expected_headers diberikan dan header di sheet tidak cocok, gunakan expected_headers.
     """
     all_values = worksheet.get_all_values()
     
@@ -859,25 +883,47 @@ def read_sheet_as_dataframe(worksheet, expected_headers=None):
         return pd.DataFrame()
     
     # Baris pertama = header
-    headers = [str(h).strip() for h in all_values[0]]
+    raw_headers = [str(h).strip() for h in all_values[0]]
     
-    # Jika tidak ada data (hanya header)
-    if len(all_values) < 2:
+    # Cek apakah header di sheet cocok dengan expected_headers
+    use_expected = False
+    if expected_headers:
+        # Cek: apakah header kosong atau tidak mengandung satupun expected header?
+        non_empty_headers = [h for h in raw_headers if h != '']
+        if not non_empty_headers:
+            use_expected = True
+        else:
+            # Cek apakah setidaknya 1 expected header ada di raw headers
+            expected_lower = [h.strip().lower() for h in expected_headers]
+            raw_lower = [h.strip().lower() for h in raw_headers]
+            match_count = sum(1 for e in expected_lower if e in raw_lower)
+            if match_count == 0:
+                use_expected = True
+    
+    if use_expected and expected_headers:
+        headers = expected_headers
+        # Jika header baris pertama tidak cocok, semua baris termasuk baris 1 mungkin = data
+        # Tapi biasanya baris 1 tetap header, jadi kita skip baris 1
+        data_rows = all_values[1:]
+    else:
+        headers = raw_headers
+        data_rows = all_values[1:]
+    
+    # Jika data kosong
+    if not data_rows:
         return pd.DataFrame(columns=headers)
-    
-    data_rows = all_values[1:]
     
     # Pastikan semua row punya jumlah kolom yang sama dengan header
     cleaned_rows = []
     for row in data_rows:
         # Skip baris yang sepenuhnya kosong
-        if all(cell.strip() == '' for cell in row):
+        if all(str(cell).strip() == '' for cell in row):
             continue
         # Pad atau trim row agar sesuai jumlah header
         if len(row) < len(headers):
-            row = row + [''] * (len(headers) - len(row))
+            row = list(row) + [''] * (len(headers) - len(row))
         elif len(row) > len(headers):
-            row = row[:len(headers)]
+            row = list(row)[:len(headers)]
         cleaned_rows.append(row)
     
     if not cleaned_rows:
