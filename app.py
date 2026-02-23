@@ -438,34 +438,43 @@ def admin_page():
             try:
                 absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
                 worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
-                data = worksheet_absensi.get_all_records()
+                df = read_sheet_as_dataframe(worksheet_absensi, expected_headers=absensi_headers)
                 
-                if data:
-                    df = pd.DataFrame(data)
-                    df['Meeting ID'] = df['Meeting ID'].astype(str)
+                if not df.empty:
+                    mid_col = find_column(df, 'Meeting ID')
+                    if mid_col is None:
+                        mid_col = df.columns[0]
+                    df[mid_col] = df[mid_col].astype(str).str.strip()
                     
                     # Filter berdasarkan Meeting ID
-                    meeting_ids = df['Meeting ID'].unique()
+                    meeting_ids = df[mid_col].unique()
                     selected_meeting = st.selectbox("Pilih Rapat:", meeting_ids)
                     
                     if selected_meeting:
-                        df_filtered = df[df['Meeting ID'] == selected_meeting]
+                        df_filtered = df[df[mid_col] == selected_meeting]
                         
                         st.metric("Total Peserta Hadir", len(df_filtered))
                         
+                        # Cari kolom
+                        nama_col = find_column(df, 'Nama') or 'Nama'
+                        nip_col = find_column(df, 'NIP') or 'NIP'
+                        ts_col = find_column(df, 'Timestamp') or 'Timestamp'
+                        sig_col = find_column(df, 'Signature') or 'Signature'
+                        
+                        show_cols = [c for c in [nama_col, nip_col, ts_col] if c in df_filtered.columns]
                         st.dataframe(
-                            df_filtered[['Nama', 'NIP', 'Timestamp']],
+                            df_filtered[show_cols],
                             use_container_width=True
                         )
                         
                         # Tampilkan TTD peserta
-                        if 'Signature' in df_filtered.columns:
+                        if sig_col in df_filtered.columns:
                             st.markdown("#### ✍️ Tanda Tangan Peserta")
                             cols_ttd = st.columns(3)
                             for i, (_, row) in enumerate(df_filtered.iterrows()):
-                                sig_data = row.get('Signature', '')
+                                sig_data = row.get(sig_col, '')
                                 with cols_ttd[i % 3]:
-                                    st.markdown(f"**{row.get('Nama', '')}**")
+                                    st.markdown(f"**{row.get(nama_col, '')}**")
                                     if sig_data and len(sig_data) > 200:
                                         try:
                                             sig_bytes = base64.b64decode(sig_data)
@@ -597,19 +606,26 @@ def admin_page():
                     "Pimpinan", "Timestamp Dibuat", "Status"
                 ]
                 worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
-                data_rapat = worksheet_rapat.get_all_records()
+                df_rapat = read_sheet_as_dataframe(worksheet_rapat, expected_headers=rapat_headers)
                 
-                if data_rapat:
-                    df_rapat = pd.DataFrame(data_rapat)
-                    df_rapat['Meeting ID'] = df_rapat['Meeting ID'].astype(str)
-                    meeting_ids = df_rapat['Meeting ID'].tolist()
+                if not df_rapat.empty:
+                    mid_col_r = find_column(df_rapat, 'Meeting ID') or df_rapat.columns[0]
+                    df_rapat[mid_col_r] = df_rapat[mid_col_r].astype(str).str.strip()
+                    meeting_ids = df_rapat[mid_col_r].tolist()
                     
                     selected_meeting = st.selectbox("Pilih Rapat untuk Notulensi:", meeting_ids, key="notulensi")
                     
                     if selected_meeting:
-                        rapat_data = df_rapat[df_rapat['Meeting ID'] == selected_meeting].iloc[0]
+                        rapat_data = df_rapat[df_rapat[mid_col_r] == selected_meeting].iloc[0]
                         
-                        st.info(f"**Judul:** {rapat_data['Judul']}\n\n**Tanggal:** {rapat_data['Tanggal']}\n\n**Pimpinan:** {rapat_data['Pimpinan']}")
+                        def rapat_val(col_name, default=''):
+                            c = find_column(df_rapat, col_name)
+                            if c and c in rapat_data.index:
+                                v = rapat_data[c]
+                                return str(v).strip() if v else default
+                            return default
+                        
+                        st.info(f"**Judul:** {rapat_val('Judul')}\n\n**Tanggal:** {rapat_val('Tanggal')}\n\n**Pimpinan:** {rapat_val('Pimpinan')}")
                         
                         notulensi_text = st.text_area(
                             "Tulis Isi Notulensi *",
@@ -622,19 +638,23 @@ def admin_page():
                                 # Ambil daftar hadir
                                 absensi_headers = ["Meeting ID", "Nama", "NIP", "Timestamp", "Signature"]
                                 worksheet_absensi = get_or_create_worksheet(sheet, "Data_Absensi", headers=absensi_headers)
-                                absensi_data = worksheet_absensi.get_all_records()
-                                df_absensi = pd.DataFrame(absensi_data)
+                                df_absensi = read_sheet_as_dataframe(worksheet_absensi, expected_headers=absensi_headers)
+                                
                                 if not df_absensi.empty:
-                                    df_absensi['Meeting ID'] = df_absensi['Meeting ID'].astype(str)
-                                peserta_list = df_absensi[df_absensi['Meeting ID'] == str(selected_meeting)].to_dict('records') if not df_absensi.empty else []
+                                    abs_mid_col = find_column(df_absensi, 'Meeting ID') or df_absensi.columns[0]
+                                    df_absensi[abs_mid_col] = df_absensi[abs_mid_col].astype(str).str.strip()
+                                    peserta_df = df_absensi[df_absensi[abs_mid_col] == str(selected_meeting)]
+                                    peserta_list = peserta_df.to_dict('records')
+                                else:
+                                    peserta_list = []
                                 
                                 data_rapat_dict = {
-                                    'meeting_id': rapat_data['Meeting ID'],
-                                    'judul': rapat_data['Judul'],
-                                    'tanggal': rapat_data['Tanggal'],
-                                    'waktu': rapat_data['Waktu'],
-                                    'lokasi': rapat_data['Lokasi'],
-                                    'pimpinan': rapat_data['Pimpinan']
+                                    'meeting_id': rapat_val('Meeting ID'),
+                                    'judul': rapat_val('Judul'),
+                                    'tanggal': rapat_val('Tanggal'),
+                                    'waktu': rapat_val('Waktu'),
+                                    'lokasi': rapat_val('Lokasi'),
+                                    'pimpinan': rapat_val('Pimpinan')
                                 }
                                 
                                 pdf_filename = generate_pdf(data_rapat_dict, peserta_list, notulensi_text)
@@ -666,30 +686,48 @@ def admin_page():
                     "Pimpinan", "Timestamp Dibuat", "Status"
                 ]
                 worksheet_rapat = get_or_create_worksheet(sheet, "Data_Rapat", headers=rapat_headers)
-                data_rapat_edit = worksheet_rapat.get_all_records()
+                df_rapat_edit = read_sheet_as_dataframe(worksheet_rapat, expected_headers=rapat_headers)
                 
-                if not data_rapat_edit:
+                if df_rapat_edit.empty:
                     st.info("Belum ada rapat yang dibuat.")
                 else:
-                    df_rapat_edit = pd.DataFrame(data_rapat_edit)
-                    df_rapat_edit['Meeting ID'] = df_rapat_edit['Meeting ID'].astype(str)
+                    # Pastikan kolom Meeting ID ada
+                    meeting_col = find_column(df_rapat_edit, "Meeting ID")
+                    if meeting_col is None:
+                        meeting_col = df_rapat_edit.columns[0]
+                    
+                    df_rapat_edit[meeting_col] = df_rapat_edit[meeting_col].astype(str).str.strip()
                     
                     # Tampilkan daftar rapat
                     st.subheader("📋 Daftar Rapat")
                     
-                    display_cols = [c for c in ['Meeting ID', 'Judul', 'Tanggal', 'Waktu', 'Lokasi', 'Pimpinan', 'Status'] if c in df_rapat_edit.columns]
-                    st.dataframe(df_rapat_edit[display_cols], use_container_width=True)
+                    display_cols = []
+                    for col_name in ['Meeting ID', 'Judul', 'Tanggal', 'Waktu', 'Lokasi', 'Pimpinan', 'Status']:
+                        found = find_column(df_rapat_edit, col_name)
+                        if found:
+                            display_cols.append(found)
+                    
+                    if display_cols:
+                        st.dataframe(df_rapat_edit[display_cols], use_container_width=True)
                     
                     st.markdown("---")
                     
-                    meeting_ids_edit = df_rapat_edit['Meeting ID'].tolist()
+                    meeting_ids_edit = df_rapat_edit[meeting_col].tolist()
+                    
+                    # Helper untuk ambil nilai kolom aman
+                    def get_col_val(row, col_name, default=''):
+                        col = find_column(df_rapat_edit, col_name)
+                        if col and col in row.index:
+                            val = row[col]
+                            return str(val).strip() if val else default
+                        return default
                     
                     # Buat label yang informatif untuk selectbox
                     meeting_labels = []
                     for _, row in df_rapat_edit.iterrows():
-                        mid = str(row.get('Meeting ID', ''))
-                        judul = str(row.get('Judul', ''))
-                        tgl = str(row.get('Tanggal', ''))
+                        mid = get_col_val(row, 'Meeting ID')
+                        judul = get_col_val(row, 'Judul')
+                        tgl = get_col_val(row, 'Tanggal')
                         label = f"{mid} - {judul} ({tgl})"
                         meeting_labels.append(label)
                     
@@ -704,9 +742,9 @@ def admin_page():
                     selected_mid = meeting_ids_edit[selected_idx]
                     
                     # Cari data rapat yang dipilih
-                    rapat_row = df_rapat_edit[df_rapat_edit['Meeting ID'] == selected_mid].iloc[0]
+                    rapat_row = df_rapat_edit[df_rapat_edit[meeting_col] == selected_mid].iloc[0]
                     # Cari row index di Google Sheets (1-based + header row)
-                    rapat_row_idx = df_rapat_edit[df_rapat_edit['Meeting ID'] == selected_mid].index[0] + 2
+                    rapat_row_idx = df_rapat_edit[df_rapat_edit[meeting_col] == selected_mid].index[0] + 2
                     
                     # ---- SECTION EDIT ----
                     st.subheader("✏️ Edit Data Rapat")
@@ -716,11 +754,11 @@ def admin_page():
                     with col_e1:
                         edit_judul = st.text_input(
                             "Judul Rapat",
-                            value=str(rapat_row.get('Judul', '')),
+                            value=get_col_val(rapat_row, 'Judul'),
                             key="edit_judul"
                         )
                         try:
-                            tgl_val = datetime.strptime(str(rapat_row.get('Tanggal', '')), '%d-%m-%Y')
+                            tgl_val = datetime.strptime(get_col_val(rapat_row, 'Tanggal'), '%d-%m-%Y')
                         except:
                             tgl_val = datetime.now()
                         edit_tanggal = st.date_input(
@@ -730,12 +768,12 @@ def admin_page():
                         )
                         edit_lokasi = st.text_input(
                             "Lokasi Rapat",
-                            value=str(rapat_row.get('Lokasi', '')),
+                            value=get_col_val(rapat_row, 'Lokasi'),
                             key="edit_lokasi"
                         )
                     
                     with col_e2:
-                        waktu_str = str(rapat_row.get('Waktu', '00:00'))
+                        waktu_str = get_col_val(rapat_row, 'Waktu', '00:00')
                         try:
                             waktu_val = datetime.strptime(waktu_str, '%H:%M').time()
                         except:
@@ -747,11 +785,11 @@ def admin_page():
                         )
                         edit_pimpinan = st.text_input(
                             "Pimpinan Rapat",
-                            value=str(rapat_row.get('Pimpinan', '')),
+                            value=get_col_val(rapat_row, 'Pimpinan'),
                             key="edit_pimpinan"
                         )
                         status_options = ["Aktif", "Selesai", "Dibatalkan"]
-                        current_status = str(rapat_row.get('Status', 'Aktif'))
+                        current_status = get_col_val(rapat_row, 'Status', 'Aktif')
                         status_idx = status_options.index(current_status) if current_status in status_options else 0
                         edit_status = st.selectbox(
                             "Status Rapat",
@@ -772,7 +810,7 @@ def admin_page():
                                     edit_waktu.strftime("%H:%M"),
                                     edit_lokasi,
                                     edit_pimpinan,
-                                    str(rapat_row.get('Timestamp Dibuat', '')),
+                                    get_col_val(rapat_row, 'Timestamp Dibuat'),
                                     edit_status
                                 ]
                                 if update_row_in_gsheet(worksheet_rapat, rapat_row_idx, updated_row):
