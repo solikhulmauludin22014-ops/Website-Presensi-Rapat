@@ -1075,6 +1075,10 @@ def absensi_page():
         st.markdown("### ✍️ Tanda Tangan Digital")
         st.info("Silakan tanda tangan di kotak di bawah ini menggunakan mouse/touchscreen")
         
+        # Counter untuk reset canvas (mengubah key agar canvas di-remount)
+        if "canvas_key_counter" not in st.session_state:
+            st.session_state.canvas_key_counter = 0
+        
         # Canvas untuk tanda tangan
         canvas_result = st_canvas(
             stroke_width=3,
@@ -1083,13 +1087,14 @@ def absensi_page():
             height=200,
             width=600,
             drawing_mode="freedraw",
-            key="signature_canvas",
+            key=f"signature_canvas_{st.session_state.canvas_key_counter}",
         )
         
         col1, col2 = st.columns([1, 3])
         
         with col1:
             if st.button("🔄 Hapus Tanda Tangan"):
+                st.session_state.canvas_key_counter += 1
                 st.rerun()
         
         st.markdown("---")
