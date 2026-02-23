@@ -84,7 +84,9 @@ def get_or_create_worksheet(sheet, worksheet_name, headers=None):
 def save_to_gsheet(worksheet, data):
     """Simpan data ke Google Sheets"""
     try:
-        worksheet.append_row(data)
+        # Pastikan semua value jadi string untuk konsistensi
+        data = [str(d) if d is not None else '' for d in data]
+        worksheet.append_row(data, value_input_option='RAW')
         return True
     except Exception as e:
         st.error(f"Gagal menyimpan data: {str(e)}")
@@ -829,12 +831,29 @@ def absensi_page():
         
         rapat_info = rapat.iloc[0]
         
-        # Helper untuk akses kolom aman
+        # Mapping kolom berdasarkan index sebagai fallback
+        # Header: Meeting ID(0), Judul(1), Tanggal(2), Waktu(3), Lokasi(4), Pimpinan(5), Timestamp(6), Status(7)
+        col_index_map = {
+            "meeting id": 0, "judul": 1, "tanggal": 2, "waktu": 3,
+            "lokasi": 4, "pimpinan": 5, "timestamp dibuat": 6, "status": 7
+        }
+        
+        # Helper untuk akses kolom aman dengan fallback index
         def safe_get(col_name, default=""):
+            # Coba 1: cari berdasarkan nama kolom
             col = find_column(df_rapat, col_name)
             if col is not None and col in rapat_info.index:
                 val = rapat_info[col]
-                return str(val) if val else default
+                if val is not None and str(val).strip() != '':
+                    return str(val).strip()
+            
+            # Coba 2: akses berdasarkan index kolom
+            idx = col_index_map.get(col_name.strip().lower())
+            if idx is not None and idx < len(rapat_info):
+                val = rapat_info.iloc[idx]
+                if val is not None and str(val).strip() != '':
+                    return str(val).strip()
+            
             return default
         
         # Tampilkan info rapat
