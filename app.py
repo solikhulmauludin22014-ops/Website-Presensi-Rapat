@@ -214,19 +214,57 @@ def generate_pdf(data_rapat, peserta_list, notulensi):
     pdf.set_font('Arial', 'B', 9)
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(10, 7, 'No', 1, 0, 'C', True)
-    pdf.cell(60, 7, 'Nama', 1, 0, 'C', True)
-    pdf.cell(40, 7, 'NIP', 1, 0, 'C', True)
-    pdf.cell(50, 7, 'Waktu Absen', 1, 0, 'C', True)
-    pdf.cell(30, 7, 'Status', 1, 1, 'C', True)
+    pdf.cell(50, 7, 'Nama', 1, 0, 'C', True)
+    pdf.cell(35, 7, 'NIP', 1, 0, 'C', True)
+    pdf.cell(40, 7, 'Waktu Absen', 1, 0, 'C', True)
+    pdf.cell(20, 7, 'Status', 1, 0, 'C', True)
+    pdf.cell(35, 7, 'Tanda Tangan', 1, 1, 'C', True)
     
     pdf.set_font('Arial', '', 8)
     
+    import tempfile, os
+    temp_sig_files = []
+    
     for idx, peserta in enumerate(peserta_list, 1):
-        pdf.cell(10, 6, str(idx), 1, 0, 'C')
-        pdf.cell(60, 6, peserta.get('Nama', ''), 1, 0)
-        pdf.cell(40, 6, peserta.get('NIP', ''), 1, 0)
-        pdf.cell(50, 6, peserta.get('Timestamp', ''), 1, 0)
-        pdf.cell(30, 6, 'Hadir', 1, 1, 'C')
+        row_height = 15  # Tinggi baris untuk menampung TTD
+        y_before = pdf.get_y()
+        x_before = pdf.get_x()
+        
+        pdf.cell(10, row_height, str(idx), 1, 0, 'C')
+        pdf.cell(50, row_height, peserta.get('Nama', ''), 1, 0)
+        pdf.cell(35, row_height, peserta.get('NIP', ''), 1, 0)
+        pdf.cell(40, row_height, peserta.get('Timestamp', ''), 1, 0)
+        pdf.cell(20, row_height, 'Hadir', 1, 0, 'C')
+        
+        # Render TTD dari base64
+        sig_data = peserta.get('Signature', '')
+        sig_x = pdf.get_x()
+        sig_y = pdf.get_y()
+        
+        if sig_data and len(sig_data) > 200:
+            try:
+                sig_bytes = base64.b64decode(sig_data)
+                sig_img = Image.open(BytesIO(sig_bytes))
+                # Simpan ke file temporary
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
+                sig_img.save(tmp.name, format='PNG')
+                tmp.close()
+                temp_sig_files.append(tmp.name)
+                
+                pdf.cell(35, row_height, '', 1, 1)  # Border kosong untuk kolom TTD
+                # Gambar TTD di dalam sel
+                pdf.image(tmp.name, x=sig_x + 2, y=sig_y + 1, w=30, h=row_height - 2)
+            except:
+                pdf.cell(35, row_height, '-', 1, 1, 'C')
+        else:
+            pdf.cell(35, row_height, '-', 1, 1, 'C')
+    
+    # Bersihkan file temporary
+    for f in temp_sig_files:
+        try:
+            os.unlink(f)
+        except:
+            pass
     
     pdf.ln(5)
     
@@ -393,8 +431,28 @@ def admin_page():
                             use_container_width=True
                         )
                         
+                        # Tampilkan TTD peserta
+                        if 'Signature' in df_filtered.columns:
+                            st.markdown("#### ✍️ Tanda Tangan Peserta")
+                            cols_ttd = st.columns(3)
+                            for i, (_, row) in enumerate(df_filtered.iterrows()):
+                                sig_data = row.get('Signature', '')
+                                with cols_ttd[i % 3]:
+                                    st.markdown(f"**{row.get('Nama', '')}**")
+                                    if sig_data and len(sig_data) > 200:
+                                        try:
+                                            sig_bytes = base64.b64decode(sig_data)
+                                            sig_img = Image.open(BytesIO(sig_bytes))
+                                            st.image(sig_img, width=200)
+                                        except:
+                                            st.caption("TTD tidak dapat ditampilkan")
+                                    else:
+                                        st.caption("TTD tidak tersedia")
+                        
+                        st.markdown("---")
+                        
                         # Download CSV
-                        csv = df_filtered.to_csv(index=False)
+                        csv = df_filtered[['Nama', 'NIP', 'Timestamp']].to_csv(index=False)
                         st.download_button(
                             "📥 Download Daftar Hadir (CSV)",
                             csv,
@@ -848,7 +906,7 @@ def absensi_page():
                     nama,
                     nip,
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    signature_base64[:100]  # Simpan sebagian untuk verifikasi
+                    signature_base64  # Simpan TTD lengkap sebagai base64
                 ]
                 
                 if save_to_gsheet(worksheet_absensi, row_data):
