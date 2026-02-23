@@ -107,6 +107,8 @@ def save_to_gsheet(worksheet, data):
 def update_row_in_gsheet(worksheet, row_index, data):
     """Update baris tertentu di Google Sheets (row_index 1-based, termasuk header)"""
     try:
+        row_index = int(row_index)  # Pastikan Python int, bukan numpy int64
+        data = [str(d) if d is not None else '' for d in data]
         for col_idx, value in enumerate(data, start=1):
             worksheet.update_cell(row_index, col_idx, value)
         return True
@@ -117,6 +119,7 @@ def update_row_in_gsheet(worksheet, row_index, data):
 def delete_row_in_gsheet(worksheet, row_index):
     """Hapus baris tertentu di Google Sheets (row_index 1-based, termasuk header)"""
     try:
+        row_index = int(row_index)  # Pastikan Python int, bukan numpy int64
         worksheet.delete_rows(row_index)
         return True
     except Exception as e:
