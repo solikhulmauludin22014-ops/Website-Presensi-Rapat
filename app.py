@@ -132,10 +132,31 @@ def generate_meeting_id():
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     return f"MTG{timestamp}"
 
+def get_base_url():
+    """Dapatkan base URL aplikasi secara otomatis"""
+    # Cek apakah ada app_url di secrets
+    app_url = st.secrets.get('app_url', '').strip().rstrip('/')
+    if app_url and app_url != 'http://localhost:8501':
+        return app_url
+    
+    # Auto-detect dari session (untuk Streamlit Cloud)
+    try:
+        from streamlit.web.server.websocket_headers import _get_websocket_headers
+        headers = _get_websocket_headers()
+        if headers:
+            host = headers.get('Host', '')
+            if host:
+                scheme = 'https' if '.streamlit.app' in host else 'http'
+                return f"{scheme}://{host}"
+    except:
+        pass
+    
+    return 'https://websiterapatonline.streamlit.app'
+
 def generate_qr_code(meeting_id):
     """Generate QR Code untuk link absensi"""
-    # URL form absensi (disesuaikan dengan deployment Anda)
-    url = f"{st.secrets.get('app_url', 'http://localhost:8501')}?page=absensi&meeting_id={meeting_id}"
+    base_url = get_base_url()
+    url = f"{base_url}?page=absensi&meeting_id={meeting_id}"
     
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
