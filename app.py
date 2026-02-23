@@ -11,6 +11,10 @@ from PIL import Image
 from streamlit_drawable_canvas import st_canvas
 import hashlib
 import base64
+from openpyxl import Workbook
+from openpyxl.drawing.image import Image as XlImage
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -474,13 +478,108 @@ def admin_page():
                         
                         st.markdown("---")
                         
-                        # Download CSV
-                        csv = df_filtered[['Nama', 'NIP', 'Timestamp']].to_csv(index=False)
+                        # Download Excel dengan TTD
+                        def generate_excel_daftar_hadir(df_data, meeting_id_str):
+                            """Generate file Excel dengan kolom terpisah dan gambar TTD"""
+                            wb = Workbook()
+                            ws = wb.active
+                            ws.title = "Daftar Hadir"
+                            
+                            # Style
+                            header_font = Font(bold=True, color="FFFFFF", size=11)
+                            header_fill = PatternFill(start_color="2E86C1", end_color="2E86C1", fill_type="solid")
+                            thin_border = Border(
+                                left=Side(style='thin'), right=Side(style='thin'),
+                                top=Side(style='thin'), bottom=Side(style='thin')
+                            )
+                            center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                            
+                            # Judul
+                            ws.merge_cells('A1:E1')
+                            ws['A1'] = f'DAFTAR HADIR RAPAT - {meeting_id_str}'
+                            ws['A1'].font = Font(bold=True, size=14)
+                            ws['A1'].alignment = Alignment(horizontal='center')
+                            
+                            # Header kolom di baris 3
+                            headers = ['No', 'Nama', 'NIP', 'Waktu Absen', 'Tanda Tangan']
+                            col_widths = [6, 30, 25, 22, 25]
+                            
+                            for col_idx, (header, width) in enumerate(zip(headers, col_widths), 1):
+                                cell = ws.cell(row=3, column=col_idx, value=header)
+                                cell.font = header_font
+                                cell.fill = header_fill
+                                cell.border = thin_border
+                                cell.alignment = center_align
+                                ws.column_dimensions[get_column_letter(col_idx)].width = width
+                            
+                            # Data
+                            row_num = 4
+                            for idx, (_, row) in enumerate(df_data.iterrows(), 1):
+                                ws.row_dimensions[row_num].height = 60  # Tinggi untuk TTD
+                                
+                                # No
+                                cell = ws.cell(row=row_num, column=1, value=idx)
+                                cell.border = thin_border
+                                cell.alignment = center_align
+                                
+                                # Nama
+                                cell = ws.cell(row=row_num, column=2, value=str(row.get('Nama', '')))
+                                cell.border = thin_border
+                                cell.alignment = Alignment(vertical='center', wrap_text=True)
+                                
+                                # NIP
+                                cell = ws.cell(row=row_num, column=3, value=str(row.get('NIP', '')))
+                                cell.border = thin_border
+                                cell.alignment = center_align
+                                
+                                # Timestamp
+                                cell = ws.cell(row=row_num, column=4, value=str(row.get('Timestamp', '')))
+                                cell.border = thin_border
+                                cell.alignment = center_align
+                                
+                                # TTD
+                                cell = ws.cell(row=row_num, column=5, value='')
+                                cell.border = thin_border
+                                
+                                sig_data = row.get('Signature', '')
+                                if sig_data and len(str(sig_data)) > 200:
+                                    try:
+                                        sig_bytes = base64.b64decode(str(sig_data))
+                                        sig_stream = BytesIO(sig_bytes)
+                                        sig_pil = Image.open(sig_stream)
+                                        
+                                        # Resize TTD
+                                        sig_pil = sig_pil.resize((150, 50), Image.LANCZOS)
+                                        
+                                        img_buffer = BytesIO()
+                                        sig_pil.save(img_buffer, format='PNG')
+                                        img_buffer.seek(0)
+                                        
+                                        xl_img = XlImage(img_buffer)
+                                        xl_img.width = 150
+                                        xl_img.height = 50
+                                        
+                                        cell_ref = f'E{row_num}'
+                                        ws.add_image(xl_img, cell_ref)
+                                    except:
+                                        ws.cell(row=row_num, column=5, value='(TTD tidak tersedia)')
+                                else:
+                                    ws.cell(row=row_num, column=5, value='(TTD tidak tersedia)')
+                                
+                                row_num += 1
+                            
+                            # Save ke BytesIO
+                            output = BytesIO()
+                            wb.save(output)
+                            output.seek(0)
+                            return output
+                        
+                        excel_data = generate_excel_daftar_hadir(df_filtered, selected_meeting)
                         st.download_button(
-                            "📥 Download Daftar Hadir (CSV)",
-                            csv,
-                            f"daftar_hadir_{selected_meeting}.csv",
-                            "text/csv"
+                            "📥 Download Daftar Hadir (Excel)",
+                            excel_data,
+                            f"daftar_hadir_{selected_meeting}.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                 else:
                     st.info("Belum ada data absensi.")
