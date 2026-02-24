@@ -2,7 +2,7 @@ import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from fpdf import FPDF
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 import json
 import qrcode
@@ -15,6 +15,13 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XlImage
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
+
+# Timezone WIB (UTC+7) untuk Indonesia Barat
+WIB = timezone(timedelta(hours=7))
+
+def now_wib():
+    """Dapatkan waktu sekarang dalam timezone WIB (UTC+7)"""
+    return datetime.now(WIB)
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -146,7 +153,7 @@ def delete_rows_by_meeting_id(worksheet, meeting_id):
 
 def generate_meeting_id():
     """Generate unique meeting ID"""
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    timestamp = now_wib().strftime("%Y%m%d%H%M%S")
     return f"MTG{timestamp}"
 
 def get_base_url():
@@ -330,7 +337,7 @@ def generate_pdf(data_rapat, peserta_list, notulensi):
     pdf.cell(95, 5, 'Kepala Sekolah', 0, 1, 'C')
     
     # Output PDF
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = now_wib().strftime("%Y%m%d_%H%M%S")
     filename = f"Notulensi_Rapat_{timestamp}.pdf"
     pdf.output(filename)
     
@@ -372,7 +379,7 @@ def admin_page():
             
             tanggal_rapat = st.date_input(
                 "Tanggal Rapat *",
-                value=datetime.now()
+                value=now_wib()
             )
             
             lokasi_rapat = st.text_input(
@@ -383,7 +390,7 @@ def admin_page():
         with col2:
             waktu_rapat = st.time_input(
                 "Waktu Rapat *",
-                value=datetime.now().time()
+                value=now_wib().time()
             )
             
             pimpinan_rapat = st.text_input(
@@ -415,7 +422,7 @@ def admin_page():
                             waktu_rapat.strftime("%H:%M"),
                             lokasi_rapat,
                             pimpinan_rapat,
-                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            now_wib().strftime("%Y-%m-%d %H:%M:%S"),
                             "Aktif"
                         ]
                         
@@ -786,7 +793,7 @@ def admin_page():
                         try:
                             tgl_val = datetime.strptime(get_col_val(rapat_row, 'Tanggal'), '%d-%m-%Y')
                         except:
-                            tgl_val = datetime.now()
+                            tgl_val = now_wib()
                         edit_tanggal = st.date_input(
                             "Tanggal Rapat",
                             value=tgl_val,
@@ -803,7 +810,7 @@ def admin_page():
                         try:
                             waktu_val = datetime.strptime(waktu_str, '%H:%M').time()
                         except:
-                            waktu_val = datetime.now().time()
+                            waktu_val = now_wib().time()
                         edit_waktu = st.time_input(
                             "Waktu Rapat",
                             value=waktu_val,
@@ -1136,7 +1143,7 @@ def absensi_page():
                     meeting_id,
                     nama,
                     nip,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    now_wib().strftime("%Y-%m-%d %H:%M:%S"),
                     signature_base64  # Simpan TTD lengkap sebagai base64
                 ]
                 
