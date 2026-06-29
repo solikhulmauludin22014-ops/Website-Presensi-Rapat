@@ -2,10 +2,10 @@ import Link from 'next/link';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 
-import QRCodeCard from '../../../components/QRCodeCard';
-import CopyLinkButton from '../../../components/CopyLinkButton';
-import NotulensiEditor from '../../../components/NotulensiEditor';
-import { getAttendancesByMeetingId, getMeetingById, getPublicAttendanceUrl } from '../../../lib/sheets';
+import QRCodeCard from '@/components/QRCodeCard';
+import CopyLinkButton from '@/components/CopyLinkButton';
+import NotulensiEditor from '@/components/NotulensiEditor';
+import { getAttendancesByMeetingId, getMeetingById, getPublicAttendanceUrl } from '@/lib/sheets';
 
 export const dynamic = 'force-dynamic';
 

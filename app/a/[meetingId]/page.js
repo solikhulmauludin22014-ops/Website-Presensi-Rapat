@@ -1,8 +1,8 @@
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
 
-import AttendanceForm from '../../../components/AttendanceForm';
-import { getMeetingById, getPublicAttendanceUrl } from '../../../lib/sheets';
+import AttendanceForm from '@/components/AttendanceForm';
+import { getMeetingById, getPublicAttendanceUrl } from '@/lib/sheets';
 
 export const dynamic = 'force-dynamic';
 

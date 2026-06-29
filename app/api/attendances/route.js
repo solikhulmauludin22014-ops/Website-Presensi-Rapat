@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { createAttendance } from '../../../lib/sheets';
+import { createAttendance } from '@/lib/sheets';
 
 export const runtime = 'nodejs';
 

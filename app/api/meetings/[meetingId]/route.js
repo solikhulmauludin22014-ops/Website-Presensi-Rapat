@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { deleteMeeting, updateMeeting } from '../../../../lib/sheets';
+import { deleteMeeting, updateMeeting } from '@/lib/sheets';
 
 export const runtime = 'nodejs';
 

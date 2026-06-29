@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { getMeetingById } from '../../../../../lib/sheets';
+import { getMeetingById } from '@/lib/sheets';
 
 export const runtime = 'nodejs';
 
