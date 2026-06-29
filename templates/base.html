@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Sistem Absensi{% endblock %}</title>
+  <style>
+    :root { --bg: #f4f6f8; --card: #ffffff; --text: #102033; --muted: #5b6573; --accent: #1f6feb; --border: #d8dee6; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: linear-gradient(180deg, #eef3f8 0%, var(--bg) 100%); color: var(--text); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(16, 32, 51, 0.06); }
+    .grid { display: grid; gap: 16px; }
+    .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+    .btn { display: inline-block; background: var(--accent); color: white; padding: 10px 16px; border-radius: 10px; text-decoration: none; border: 0; cursor: pointer; }
+    .btn-secondary { background: #334155; }
+    input, select, textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); margin-top: 6px; }
+    label { font-weight: 600; display: block; margin-top: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--border); padding: 10px 8px; text-align: left; vertical-align: top; }
+    .muted { color: var(--muted); }
+    .messages { margin-bottom: 16px; }
+    .message { padding: 10px 12px; border-radius: 10px; background: #e8f3ff; border: 1px solid #c6defc; margin-bottom: 8px; }
+    .signature-pad { border: 1px solid var(--border); border-radius: 12px; background: white; touch-action: none; width: 100%; max-width: 680px; height: 220px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

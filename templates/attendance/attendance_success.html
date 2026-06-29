@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Absensi Terkirim{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Absensi berhasil disimpan</h1>
+  <p>Terima kasih, absensi untuk rapat <strong>{{ meeting.title }}</strong> sudah tersimpan.</p>
+  <p><a class="btn" href="{% url 'attendance_form' meeting.meeting_id %}">Kembali ke Form</a></p>
+</div>
+{% endblock %}

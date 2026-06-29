@@ -1,0 +1,59 @@
+# Streamlit — JANGAN pernah commit folder ini (berisi credentials)
+.streamlit/secrets.toml
+.streamlit/sa.json
+.streamlit/*.json
+
+
+# Next.js / Vercel
+node_modules/
+.next/
+.vercel/
+.env.local
+*.log
+
+# Local env and database
+.env
+import.env
+db.sqlite3
+media/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PDF Output
+*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.vercel
+.env*

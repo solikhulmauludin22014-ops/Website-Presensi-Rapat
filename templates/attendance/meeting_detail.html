@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Detail Rapat{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ meeting.title }}</h1>
+  <p class="muted">ID: {{ meeting.meeting_id }}</p>
+  <div class="grid grid-2">
+    <div>
+      <p><strong>Tanggal:</strong> {{ meeting.meeting_date }}</p>
+      <p><strong>Waktu:</strong> {{ meeting.meeting_time }}</p>
+      <p><strong>Lokasi:</strong> {{ meeting.location }}</p>
+      <p><strong>Pimpinan:</strong> {{ meeting.leader }}</p>
+      <p><strong>Status:</strong> {{ meeting.get_status_display }}</p>
+      <p><a class="btn" href="{% url 'attendance_form' meeting.meeting_id %}">Buka Link Absensi</a> <a class="btn btn-secondary" href="{% url 'meeting_pdf' meeting.meeting_id %}">Unduh PDF</a></p>
+      <div style="margin-top: 14px;">
+        <label for="attendance-link">Link absensi siap pakai</label>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top: 6px;">
+          <input id="attendance-link" type="text" value="{{ qr_url }}" readonly style="flex:1; min-width: 280px;">
+          <button class="btn btn-secondary" type="button" id="copy-attendance-link">Salin Link</button>
+        </div>
+        <p class="muted" style="margin-top: 8px;">Peserta cukup buka link ini, isi nama, NIP, lalu tanda tangan. Tidak ada login.</p>
+      </div>
+    </div>
+    <div>
+      <img alt="QR Code" src="data:image/png;base64,{{ qr_data_uri }}" style="width: 260px; max-width: 100%; border-radius: 12px; border: 1px solid #d8dee6; background: white;">
+    </div>
+  </div>
+  <hr>
+  <h2>Daftar Hadir ({{ attendance_count }})</h2>
+  {% if attendances %}
+    <table>
+      <thead><tr><th>Nama</th><th>NIP</th><th>Waktu</th></tr></thead>
+      <tbody>
+      {% for attendance in attendances %}
+        <tr>
+          <td>{{ attendance.name }}</td>
+          <td>{{ attendance.nip }}</td>
+          <td>{{ attendance.timestamp }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">Belum ada peserta yang absen.</p>
+  {% endif %}
+</div>
+<script>
+(() => {
+  const button = document.getElementById('copy-attendance-link');
+  const input = document.getElementById('attendance-link');
+  if (!button || !input) return;
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(input.value);
+      button.textContent = 'Tersalin';
+      setTimeout(() => { button.textContent = 'Salin Link'; }, 1500);
+    } catch (error) {
+      input.select();
+      document.execCommand('copy');
+      button.textContent = 'Tersalin';
+      setTimeout(() => { button.textContent = 'Salin Link'; }, 1500);
+    }
+  });
+})();
+</script>
+{% endblock %}

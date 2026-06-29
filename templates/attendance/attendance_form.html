@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Form Absensi{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Form Absensi</h1>
+  <p class="muted">Rapat: {{ meeting.title }} | {{ meeting.meeting_date }} {{ meeting.meeting_time }}</p>
+  <form method="post" id="attendance-form">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    <label>Nama Lengkap</label>{{ form.name }}
+    <label>NIP</label>{{ form.nip }}
+    {{ form.signature_base64 }}
+    <div style="margin-top: 18px;">
+      <label>Tanda Tangan</label>
+      <canvas id="signature-canvas" class="signature-pad" width="680" height="220"></canvas>
+    </div>
+    <div style="margin-top: 12px; display:flex; gap: 12px; flex-wrap: wrap;">
+      <button class="btn btn-secondary" type="button" id="clear-signature">Hapus TTD</button>
+      <button class="btn" type="submit">Kirim Absensi</button>
+    </div>
+  </form>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('signature-canvas');
+  const form = document.getElementById('attendance-form');
+  const input = document.getElementById('id_signature_base64');
+  const clearButton = document.getElementById('clear-signature');
+  const ctx = canvas.getContext('2d');
+  let drawing = false;
+  let hasDrawn = false;
+  const resize = () => {
+    const data = canvas.toDataURL();
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#111827';
+    if (hasDrawn) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, rect.width, rect.height);
+      img.src = data;
+    }
+  };
+  const position = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const point = event.touches ? event.touches[0] : event;
+    return { x: point.clientX - rect.left, y: point.clientY - rect.top };
+  };
+  const draw = (event) => {
+    if (!drawing) return;
+    const { x, y } = position(event);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+  canvas.addEventListener('pointerdown', (event) => {
+    drawing = true;
+    hasDrawn = true;
+    const { x, y } = position(event);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  });
+  canvas.addEventListener('pointermove', draw);
+  window.addEventListener('pointerup', () => {
+    drawing = false;
+  });
+  clearButton.addEventListener('click', () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hasDrawn = false;
+    input.value = '';
+  });
+  form.addEventListener('submit', () => {
+    input.value = hasDrawn ? canvas.toDataURL('image/png') : '';
+  });
+  window.addEventListener('resize', resize);
+  resize();
+})();
+</script>
+{% endblock %}

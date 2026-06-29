@@ -1,0 +1,11 @@
+Django>=5.0,<6.0
+psycopg[binary]>=3.1.18
+dj-database-url>=2.1.0
+python-dotenv>=1.0.1
+gunicorn>=22.0.0
+whitenoise>=6.7.0
+fpdf2>=2.7.0
+pandas>=2.2.0
+pillow>=10.0.0
+qrcode>=7.4.0
+openpyxl>=3.1.0

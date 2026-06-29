@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Rapat | Absensi{% endblock %}
+{% block content %}
+<div class="grid grid-2">
+  <div class="card">
+    <h1>Admin Rapat</h1>
+    <p class="muted">Buat rapat baru, lalu bagikan link absensi publik tanpa login dari halaman detail rapat.</p>
+    <form method="post">
+      {% csrf_token %}
+      {{ form.non_field_errors }}
+      <label>Judul</label>{{ form.title }}
+      <label>Tanggal</label>{{ form.meeting_date }}
+      <label>Waktu</label>{{ form.meeting_time }}
+      <label>Lokasi</label>{{ form.location }}
+      <label>Pimpinan</label>{{ form.leader }}
+      <label>Status</label>{{ form.status }}
+      <div style="margin-top: 16px;">
+        <button class="btn" type="submit">Simpan Rapat</button>
+      </div>
+    </form>
+  </div>
+  <div class="card">
+    <h2>Daftar Rapat</h2>
+    <p class="muted">Klik Buka untuk melihat link absensi, QR code, dan daftar hadir rapat.</p>
+    {% if meetings %}
+      <table>
+        <thead><tr><th>Judul</th><th>Tanggal</th><th>Status</th><th>Aksi</th></tr></thead>
+        <tbody>
+        {% for meeting in meetings %}
+          <tr>
+            <td>{{ meeting.title }}</td>
+            <td>{{ meeting.meeting_date }}</td>
+            <td>{{ meeting.get_status_display }}</td>
+            <td><a class="btn btn-secondary" href="{% url 'meeting_detail' meeting.meeting_id %}">Buka</a></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">Belum ada rapat.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
